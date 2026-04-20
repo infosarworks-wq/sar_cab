@@ -247,6 +247,8 @@
   }
 
   var viewer = null;
+  var loadToken = 0;
+  var activeBlobRevoke = null;
 
   var state = {
     project: projectFolder,
@@ -283,6 +285,59 @@
     };
   }
 
+  function getMaxTextureSize() {
+    try {
+      var c = document.createElement('canvas');
+      var gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+      if (!gl) return 8192;
+      return gl.getParameter(gl.MAX_TEXTURE_SIZE) || 8192;
+    } catch (e) {
+      return 8192;
+    }
+  }
+
+  function downscaleIfNeeded(httpsUrl) {
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = function () {
+        var maxTex = getMaxTextureSize();
+        if (img.width <= maxTex && img.height <= maxTex) {
+          resolve({ url: httpsUrl, revoke: null });
+          return;
+        }
+
+        var scale = Math.min(maxTex / img.width, maxTex / img.height);
+        var w = Math.max(1, Math.floor(img.width * scale));
+        var h = Math.max(1, Math.floor(img.height * scale));
+        var canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        var ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Could not create canvas context for resize.'));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, w, h);
+        canvas.toBlob(function (blob) {
+          if (!blob) {
+            reject(new Error('Could not create resized panorama blob.'));
+            return;
+          }
+          var blobUrl = URL.createObjectURL(blob);
+          resolve({
+            url: blobUrl,
+            revoke: function () { URL.revokeObjectURL(blobUrl); }
+          });
+        }, 'image/jpeg', 0.92);
+      };
+      img.onerror = function () {
+        reject(new Error('Image preload failed before resize.'));
+      };
+      img.src = httpsUrl;
+    });
+  }
+
   function mainSceneConfigForDisplay(panoramaUrl, o) {
     return {
       title: 'main',
@@ -297,24 +352,46 @@
 
   function loadPanoramaUrl(httpsUrl, preserve) {
     var o = preserve ? getSceneOrientation() : { pitch: 0, yaw: 0, hfov: 100 };
-    if (!viewer) {
-      viewer = pannellum.viewer('panorama', {
-        default: {
-          firstScene: 'main',
-          sceneFadeDuration: 0,
-          crossOrigin: 'anonymous'
-        },
-        scenes: {
-          main: mainSceneConfigForDisplay(httpsUrl, o)
+    var token = ++loadToken;
+    downscaleIfNeeded(httpsUrl)
+      .then(function (prepared) {
+        if (token !== loadToken) {
+          if (prepared.revoke) prepared.revoke();
+          return;
         }
+        if (activeBlobRevoke) {
+          activeBlobRevoke();
+          activeBlobRevoke = null;
+        }
+        if (prepared.revoke) activeBlobRevoke = prepared.revoke;
+
+        if (!viewer) {
+          viewer = pannellum.viewer('panorama', {
+            default: {
+              firstScene: 'main',
+              sceneFadeDuration: 0,
+              crossOrigin: 'anonymous'
+            },
+            scenes: {
+              main: mainSceneConfigForDisplay(prepared.url, o)
+            }
+          });
+          return;
+        }
+        try {
+          viewer.removeScene('main');
+        } catch (e) { /* ignore */ }
+        viewer.addScene('main', mainSceneConfigForDisplay(prepared.url, o));
+        viewer.loadScene('main', o.pitch, o.yaw, o.hfov);
+      })
+      .catch(function (err) {
+        if (token !== loadToken) return;
+        showError(
+          'Could not load this image in the 360 viewer.<br><br>' +
+          '<code style="word-break:break-all;">' + escapeHtml(httpsUrl) + '</code><br><br>' +
+          escapeHtml(String(err && err.message ? err.message : err))
+        );
       });
-      return;
-    }
-    try {
-      viewer.removeScene('main');
-    } catch (e) { /* ignore */ }
-    viewer.addScene('main', mainSceneConfigForDisplay(httpsUrl, o));
-    viewer.loadScene('main', o.pitch, o.yaw, o.hfov);
   }
 
   function currentImageUrl() {
