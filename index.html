@@ -117,10 +117,16 @@
     </div>
   </div>
 
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js"
+      }
+    }
+  </script>
+
   <script type="module">
-    import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js";
     import { Viewer } from "https://cdn.jsdelivr.net/npm/@photo-sphere-viewer/core@5/index.module.js";
-    window.THREE = THREE;
 
     const BUCKET_BASE = "https://storage.googleapis.com/sar_cab";
     const MAX_VIEW_SCAN = 80;
