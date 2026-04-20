@@ -44,7 +44,7 @@
       backdrop-filter: blur(8px);
     }
     #viewBar { top: 16px; }
-    #photoBar { bottom: 20px; }
+    #photoBar { bottom: 38px; }
     .label {
       font-size: 12px;
       opacity: 0.75;
@@ -111,7 +111,6 @@
 
   <div id="photoBar" class="chrome" style="display:none;">
     <div class="chrome-inner">
-      <span class="label">Photos</span>
       <input type="range" id="photoSlider" min="0" max="0" value="0" />
       <div id="photoDots" class="dots"></div>
     </div>
@@ -133,8 +132,8 @@
     const MAX_PHOTO_SCAN = 500;
 
     let viewer = null;
-    let currentPrepared = null;
     let loadToken = 0;
+    const preparedCache = new Map();
 
     const state = {
       project: getQueryParam("project"),
@@ -251,7 +250,7 @@
         img.onload = () => {
           const max = getMaxTextureSize();
           if (img.width <= max && img.height <= max) {
-            resolve({ url, revoke: null });
+            resolve({ url });
             return;
           }
           const scale = Math.min(max / img.width, max / img.height);
@@ -272,15 +271,38 @@
               return;
             }
             const blobUrl = URL.createObjectURL(blob);
-            resolve({
-              url: blobUrl,
-              revoke: () => URL.revokeObjectURL(blobUrl)
-            });
+            resolve({ url: blobUrl });
           }, "image/jpeg", 0.92);
         };
         img.onerror = () => reject(new Error("Image preload failed."));
         img.src = url;
       });
+    }
+
+    function getPreparedPanorama(url) {
+      if (!preparedCache.has(url)) {
+        preparedCache.set(url, preparePanorama(url));
+      }
+      return preparedCache.get(url);
+    }
+
+    async function preloadAllPanoramas() {
+      const urls = [];
+      for (let vi = 0; vi < state.views.length; vi++) {
+        const meta = state.views[vi];
+        const count = state.photosPerView[vi];
+        for (let p = 1; p <= count; p++) {
+          urls.push(buildUrl(state.project, `view-${meta.index}`, photoFileName(p, meta.spaceBeforeDot)));
+        }
+      }
+      // Preload sequentially to avoid hammering the browser/network.
+      for (const url of urls) {
+        try {
+          await getPreparedPanorama(url);
+        } catch (e) {
+          // Ignore preload failures; explicit loads still show useful errors.
+        }
+      }
     }
 
     async function loadPanorama(url, preserve) {
@@ -289,13 +311,10 @@
       const zoom = preserve && viewer ? viewer.getZoomLevel() : null;
 
       try {
-        const prepared = await preparePanorama(url);
+        const prepared = await getPreparedPanorama(url);
         if (token !== loadToken) {
-          if (prepared.revoke) prepared.revoke();
           return;
         }
-        const previousRevoke = currentPrepared ? currentPrepared.revoke : null;
-        currentPrepared = prepared;
 
         if (!viewer) {
           viewer = new Viewer({
@@ -304,17 +323,15 @@
             navbar: ["zoom", "move", "fullscreen"],
             loadingImg: null
           });
-          if (previousRevoke) previousRevoke();
           return;
         }
 
         await viewer.setPanorama(prepared.url, {
           transition: false,
-          showLoader: true,
+          showLoader: false,
           position: position || undefined,
           zoom: zoom || undefined
         });
-        if (previousRevoke) previousRevoke();
       } catch (err) {
         if (token !== loadToken) return;
         showError(
@@ -396,6 +413,7 @@
       await loadPanorama(currentImageUrl(), false);
       renderViewDots();
       renderPhotoControls();
+      preloadAllPanoramas();
     })().catch((err) => {
       showError("Error: " + escapeHtml(String(err && err.message ? err.message : err)));
     });
