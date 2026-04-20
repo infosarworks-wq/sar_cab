@@ -138,8 +138,13 @@
   var MAX_PHOTOS = 200;
 
   function getQueryParam(name) {
-    var m = new RegExp('[?&]' + name + '=([^&]*)').exec(window.location.search);
-    return m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : '';
+    try {
+      var params = new URLSearchParams(window.location.search);
+      var v = params.get(name);
+      return v ? String(v).trim() : '';
+    } catch (e) {
+      return '';
+    }
   }
 
   /** Project folder inside the bucket, e.g. sample-cabinets or "sample cabinets" */
@@ -148,7 +153,7 @@
     showError(
       'Missing <strong>?project=</strong> in the link.<br><br>' +
       'Example (after you host this page):<br><code style="word-break:break-all;">' +
-      escapeHtml('https://YOUR_SITE.github.io/sar_cab/?project=sample-cabinets') +
+      escapeHtml('https://infosarworks-wq.github.io/sar_cab/?project=sample%20cabinets') +
       '</code><br><br>' +
       'Use the folder name exactly as it appears in your bucket (e.g. <code>sample-cabinets</code> or <code>sample%20cabinets</code> for a space).'
     );
@@ -267,23 +272,30 @@
     };
   }
 
+  /** Pannellum uses WebGL; cross-origin images need CORS on the bucket (see gcs-cors.json). */
+  function mainSceneConfig(url, o) {
+    return {
+      title: 'main',
+      type: 'equirectangular',
+      panorama: url,
+      crossOrigin: 'anonymous',
+      pitch: o.pitch,
+      yaw: o.yaw,
+      hfov: o.hfov
+    };
+  }
+
   function loadPanoramaUrl(url, preserve) {
     var o = preserve ? getSceneOrientation() : { pitch: 0, yaw: 0, hfov: 100 };
     if (!viewer) {
       viewer = pannellum.viewer('panorama', {
         default: {
           firstScene: 'main',
-          sceneFadeDuration: 0
+          sceneFadeDuration: 0,
+          crossOrigin: 'anonymous'
         },
         scenes: {
-          main: {
-            title: 'main',
-            type: 'equirectangular',
-            panorama: url,
-            pitch: o.pitch,
-            yaw: o.yaw,
-            hfov: o.hfov
-          }
+          main: mainSceneConfig(url, o)
         }
       });
       return;
@@ -291,14 +303,7 @@
     try {
       viewer.removeScene('main');
     } catch (e) { /* ignore */ }
-    viewer.addScene('main', {
-      title: 'main',
-      type: 'equirectangular',
-      panorama: url,
-      pitch: o.pitch,
-      yaw: o.yaw,
-      hfov: o.hfov
-    });
+    viewer.addScene('main', mainSceneConfig(url, o));
     viewer.loadScene('main', o.pitch, o.yaw, o.hfov);
   }
 
