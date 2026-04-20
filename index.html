@@ -112,7 +112,6 @@
   <div id="photoBar" class="chrome" style="display:none;">
     <div class="chrome-inner">
       <input type="range" id="photoSlider" min="0" max="0" value="0" />
-      <div id="photoDots" class="dots"></div>
     </div>
   </div>
 
@@ -371,18 +370,6 @@
       slider.min = "0";
       slider.max = String(Math.max(0, count - 1));
       slider.value = String(state.currentPhoto);
-      const dots = document.getElementById("photoDots");
-      dots.innerHTML = "";
-      for (let i = 0; i < count; i++) {
-        const b = document.createElement("button");
-        b.className = "dot" + (i === state.currentPhoto ? " active" : "");
-        b.addEventListener("click", () => {
-          state.currentPhoto = i;
-          loadPanorama(currentImageUrl(), true);
-          renderPhotoControls();
-        });
-        dots.appendChild(b);
-      }
     }
 
     document.getElementById("photoSlider").addEventListener("input", (e) => {
