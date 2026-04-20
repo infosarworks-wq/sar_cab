@@ -247,15 +247,6 @@
   }
 
   var viewer = null;
-  var panoramaBlobUrl = null;
-  var loadPanoramaToken = 0;
-
-  function revokePanoramaBlob() {
-    if (panoramaBlobUrl) {
-      URL.revokeObjectURL(panoramaBlobUrl);
-      panoramaBlobUrl = null;
-    }
-  }
 
   var state = {
     project: projectFolder,
@@ -297,6 +288,7 @@
       title: 'main',
       type: 'equirectangular',
       panorama: panoramaUrl,
+      crossOrigin: 'anonymous',
       pitch: o.pitch,
       yaw: o.yaw,
       hfov: o.hfov
@@ -305,46 +297,24 @@
 
   function loadPanoramaUrl(httpsUrl, preserve) {
     var o = preserve ? getSceneOrientation() : { pitch: 0, yaw: 0, hfov: 100 };
-    var token = ++loadPanoramaToken;
-
-    fetch(httpsUrl, { mode: 'cors', credentials: 'omit' })
-      .then(function (res) {
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        return res.blob();
-      })
-      .then(function (blob) {
-        if (token !== loadPanoramaToken) return;
-        revokePanoramaBlob();
-        panoramaBlobUrl = URL.createObjectURL(blob);
-        var displayUrl = panoramaBlobUrl;
-
-        if (!viewer) {
-          viewer = pannellum.viewer('panorama', {
-            default: {
-              firstScene: 'main',
-              sceneFadeDuration: 0
-            },
-            scenes: {
-              main: mainSceneConfigForDisplay(displayUrl, o)
-            }
-          });
-          return;
+    if (!viewer) {
+      viewer = pannellum.viewer('panorama', {
+        default: {
+          firstScene: 'main',
+          sceneFadeDuration: 0,
+          crossOrigin: 'anonymous'
+        },
+        scenes: {
+          main: mainSceneConfigForDisplay(httpsUrl, o)
         }
-        try {
-          viewer.removeScene('main');
-        } catch (e) { /* ignore */ }
-        viewer.addScene('main', mainSceneConfigForDisplay(displayUrl, o));
-        viewer.loadScene('main', o.pitch, o.yaw, o.hfov);
-      })
-      .catch(function (err) {
-        if (token !== loadPanoramaToken) return;
-        showError(
-          'Could not load this image from the bucket.<br><br>' +
-          '<code style="word-break:break-all;">' + escapeHtml(httpsUrl) + '</code><br><br>' +
-          escapeHtml(String(err && err.message ? err.message : err)) +
-          '<br><br>Confirm files are public and CORS is set on <code>gs://sar_cab</code> (see <code>gcs-cors.json</code>).'
-        );
       });
+      return;
+    }
+    try {
+      viewer.removeScene('main');
+    } catch (e) { /* ignore */ }
+    viewer.addScene('main', mainSceneConfigForDisplay(httpsUrl, o));
+    viewer.loadScene('main', o.pitch, o.yaw, o.hfov);
   }
 
   function currentImageUrl() {
