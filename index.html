@@ -138,13 +138,8 @@
   var MAX_PHOTOS = 200;
 
   function getQueryParam(name) {
-    try {
-      var params = new URLSearchParams(window.location.search);
-      var v = params.get(name);
-      return v ? String(v).trim() : '';
-    } catch (e) {
-      return '';
-    }
+    var m = new RegExp('[?&]' + name + '=([^&]*)').exec(window.location.search);
+    return m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : '';
   }
 
   /** Project folder inside the bucket, e.g. sample-cabinets or "sample cabinets" */
@@ -152,10 +147,10 @@
   if (!projectFolder) {
     showError(
       'Missing <strong>?project=</strong> in the link.<br><br>' +
-      'Example (after you host this page):<br><code style="word-break:break-all;">' +
-      escapeHtml('https://infosarworks-wq.github.io/sar_cab/?project=sample%20cabinets') +
+      'Example:<br><code style="word-break:break-all;">' +
+      escapeHtml(window.location.pathname + window.location.search + '?project=sample-cabinets') +
       '</code><br><br>' +
-      'Use the folder name exactly as it appears in your bucket (e.g. <code>sample-cabinets</code> or <code>sample%20cabinets</code> for a space).'
+      'Use the folder name exactly as it appears in your bucket (spaces are OK in the URL if encoded).'
     );
     return;
   }
@@ -177,10 +172,10 @@
     el.className = 'hidden';
   }
 
-  /** Probe without crossOrigin so public URLs work even before CORS is configured. */
   function imageExists(url) {
     return new Promise(function (resolve) {
       var img = new Image();
+      img.crossOrigin = 'anonymous';
       img.onload = function () { resolve(true); };
       img.onerror = function () { resolve(false); };
       img.src = url;
@@ -188,16 +183,12 @@
   }
 
   function buildUrl(project, viewFolder, fileName) {
-    var base = BUCKET_BASE.replace(/\/+$/, '');
-    var segments = [project, viewFolder, fileName];
-    return base + '/' + segments.map(function (s) {
-      return encodeURIComponent(String(s));
-    }).join('/');
-  }
-
-  /** Your bucket may use <code>1.png</code> or <code>1 .png</code> (space before the dot). */
-  function photoFileName(index, spaceBeforeDot) {
-    return spaceBeforeDot ? (index + ' .png') : (index + '.png');
+    var parts = [BUCKET_BASE, project, viewFolder, fileName].map(function (p) {
+      return String(p).replace(/^\/+|\/+$/g, '');
+    });
+    return parts.join('/').split('/').map(function (seg, i) {
+      return i === 0 ? seg : encodeURIComponent(seg).replace(/%2F/g, '/');
+    }).reduce(function (a, b, i) { return i === 0 ? b : a + '/' + b; });
   }
 
   function discoverViews(project) {
@@ -206,15 +197,9 @@
     for (var v = 1; v <= MAX_VIEWS; v++) {
       (function (viewIndex) {
         chain = chain.then(function () {
-          var folder = 'view-' + viewIndex;
-          return imageExists(buildUrl(project, folder, '1.png')).then(function (okPlain) {
-            if (okPlain) {
-              views.push({ index: viewIndex, spaceBeforeDot: false });
-              return;
-            }
-            return imageExists(buildUrl(project, folder, '1 .png')).then(function (okSpace) {
-              if (okSpace) views.push({ index: viewIndex, spaceBeforeDot: true });
-            });
+          var url = buildUrl(project, 'view-' + viewIndex, '1.png');
+          return imageExists(url).then(function (ok) {
+            if (ok) views.push({ index: viewIndex, url1: url });
           });
         });
       })(v);
@@ -222,11 +207,11 @@
     return chain.then(function () { return views; });
   }
 
-  function countPhotosInView(project, viewIndex, spaceBeforeDot) {
+  function countPhotosInView(project, viewIndex) {
     var n = 0;
     var step = function (i) {
       if (i > MAX_PHOTOS) return Promise.resolve(n);
-      var url = buildUrl(project, 'view-' + viewIndex, photoFileName(i, spaceBeforeDot));
+      var url = buildUrl(project, 'view-' + viewIndex, i + '.png');
       return imageExists(url).then(function (ok) {
         if (!ok) return n;
         n = i;
@@ -249,14 +234,12 @@
   function preloadViewPhotos(viewIdx) {
     var count = state.photosPerView[viewIdx];
     var project = state.project;
-    var meta = state.views[viewIdx];
-    var vnum = meta.index;
-    var space = meta.spaceBeforeDot;
+    var vnum = state.views[viewIdx].index;
     var key = project + '/view-' + vnum;
     if (state.preloaded[key]) return;
     var promises = [];
     for (var i = 1; i <= count; i++) {
-      promises.push(imageExists(buildUrl(project, 'view-' + vnum, photoFileName(i, space))));
+      promises.push(imageExists(buildUrl(project, 'view-' + vnum, i + '.png')));
     }
     return Promise.all(promises).then(function () {
       state.preloaded[key] = true;
@@ -272,47 +255,43 @@
     };
   }
 
-  /** Pannellum uses WebGL; cross-origin images need CORS on the bucket (see gcs-cors.json). */
-  function mainSceneConfig(url, o) {
-    return {
-      title: 'main',
-      type: 'equirectangular',
-      panorama: url,
-      crossOrigin: 'anonymous',
-      pitch: o.pitch,
-      yaw: o.yaw,
-      hfov: o.hfov
-    };
-  }
-
   function loadPanoramaUrl(url, preserve) {
     var o = preserve ? getSceneOrientation() : { pitch: 0, yaw: 0, hfov: 100 };
     if (!viewer) {
       viewer = pannellum.viewer('panorama', {
         default: {
           firstScene: 'main',
-          sceneFadeDuration: 0,
-          crossOrigin: 'anonymous'
+          sceneFadeDuration: 0
         },
         scenes: {
-          main: mainSceneConfig(url, o)
+          main: {
+            title: 'main',
+            type: 'equirectangular',
+            panorama: url,
+            pitch: o.pitch,
+            yaw: o.yaw,
+            hfov: o.hfov
+          }
         }
       });
       return;
     }
-    try {
-      viewer.removeScene('main');
-    } catch (e) { /* ignore */ }
-    viewer.addScene('main', mainSceneConfig(url, o));
+    viewer.addScene('main', {
+      title: 'main',
+      type: 'equirectangular',
+      panorama: url,
+      pitch: o.pitch,
+      yaw: o.yaw,
+      hfov: o.hfov
+    });
     viewer.loadScene('main', o.pitch, o.yaw, o.hfov);
   }
 
   function currentImageUrl() {
     var vi = state.currentView;
-    var meta = state.views[vi];
-    var vnum = meta.index;
+    var vnum = state.views[vi].index;
     var p = state.currentPhoto + 1;
-    return buildUrl(state.project, 'view-' + vnum, photoFileName(p, meta.spaceBeforeDot));
+    return buildUrl(state.project, 'view-' + vnum, p + '.png');
   }
 
   function renderViewDots() {
@@ -379,7 +358,7 @@
     .then(function (views) {
       if (!views.length) {
         showError(
-          'No views found. Expected <code>view-1/1.png</code> or <code>view-1/1 .png</code> at:<br>' +
+          'No views found. Expected <code>view-1/1.png</code> at:<br>' +
           '<code style="word-break:break-all;">' +
           escapeHtml(buildUrl(projectFolder, 'view-1', '1.png')) +
           '</code><br><br>' +
@@ -392,8 +371,7 @@
       for (var i = 0; i < views.length; i++) {
         (function (vi) {
           seq = seq.then(function () {
-            var v = views[vi];
-            return countPhotosInView(projectFolder, v.index, v.spaceBeforeDot).then(function (c) {
+            return countPhotosInView(projectFolder, views[vi].index).then(function (c) {
               state.photosPerView[vi] = c;
             });
           });
@@ -402,7 +380,7 @@
       return seq.then(function () {
         for (var j = 0; j < state.photosPerView.length; j++) {
           if (!state.photosPerView[j]) {
-            showError('View ' + state.views[j].index + ' has no numbered photos (1.png or 1 .png, then 2.png or 2 .png, …).');
+            showError('View ' + state.views[j].index + ' has no numbered photos (1.png, 2.png, …).');
             return;
           }
         }
