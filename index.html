@@ -43,6 +43,14 @@
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
       backdrop-filter: blur(8px);
     }
+    .photo-inner {
+      flex-direction: column;
+      align-items: stretch;
+      border-radius: 16px;
+      padding: 10px 14px;
+      gap: 8px;
+      min-width: min(560px, 90vw);
+    }
     #viewBar { top: 16px; }
     #photoBar { bottom: 38px; }
     .label {
@@ -77,8 +85,15 @@
       box-shadow: 0 0 0 2px rgba(229, 57, 53, 0.35);
     }
     #photoSlider {
-      width: min(320px, 45vw);
+      width: 100%;
       accent-color: var(--dot-active);
+    }
+    .slider-hint {
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      opacity: 0.9;
+      user-select: none;
     }
     #status {
       position: fixed;
@@ -110,7 +125,8 @@
   </div>
 
   <div id="photoBar" class="chrome" style="display:none;">
-    <div class="chrome-inner">
+    <div class="chrome-inner photo-inner">
+      <span class="slider-hint">slide to open cabinets</span>
       <input type="range" id="photoSlider" min="0" max="0" value="0" />
     </div>
   </div>
@@ -133,6 +149,8 @@
     let viewer = null;
     let loadToken = 0;
     const preparedCache = new Map();
+    let inFlightLoad = null;
+    let queuedLoad = null;
 
     const state = {
       project: getQueryParam("project"),
@@ -312,42 +330,56 @@
       await Promise.all(workers);
     }
 
-    async function loadPanorama(url, preserve) {
-      const token = ++loadToken;
+    async function runPanoramaLoad(url, preserve, token) {
       const position = preserve && viewer ? viewer.getPosition() : null;
       const zoom = preserve && viewer ? viewer.getZoomLevel() : null;
+      const prepared = await getPreparedPanorama(url);
+      if (token !== loadToken) return;
 
-      try {
-        const prepared = await getPreparedPanorama(url);
-        if (token !== loadToken) {
-          return;
-        }
-
-        if (!viewer) {
-          viewer = new Viewer({
-            container: document.getElementById("viewer"),
-            panorama: prepared.url,
-            navbar: ["zoom", "move", "fullscreen"],
-            loadingImg: null
-          });
-          return;
-        }
-
-        await viewer.setPanorama(prepared.url, {
-          transition: false,
-          showLoader: false,
-          position: position || undefined,
-          zoom: zoom || undefined
+      if (!viewer) {
+        viewer = new Viewer({
+          container: document.getElementById("viewer"),
+          panorama: prepared.url,
+          navbar: ["zoom", "move", "fullscreen"],
+          loadingImg: null
         });
-      } catch (err) {
-        if (token !== loadToken) return;
-        showError(
-          'Could not load this image.<br><br><code style="word-break:break-all;">' +
-          escapeHtml(url) +
-          "</code><br><br>" +
-          escapeHtml(String(err && err.message ? err.message : err))
-        );
+        return;
       }
+
+      await viewer.setPanorama(prepared.url, {
+        transition: false,
+        showLoader: false,
+        position: position || undefined,
+        zoom: zoom || undefined
+      });
+    }
+
+    function loadPanorama(url, preserve) {
+      const token = ++loadToken;
+      queuedLoad = { url, preserve, token };
+      if (inFlightLoad) return inFlightLoad;
+
+      inFlightLoad = (async () => {
+        while (queuedLoad) {
+          const next = queuedLoad;
+          queuedLoad = null;
+          try {
+            await runPanoramaLoad(next.url, next.preserve, next.token);
+          } catch (err) {
+            if (next.token !== loadToken) continue;
+            showError(
+              'Could not load this image.<br><br><code style="word-break:break-all;">' +
+              escapeHtml(next.url) +
+              "</code><br><br>" +
+              escapeHtml(String(err && err.message ? err.message : err))
+            );
+          }
+        }
+      })().finally(() => {
+        inFlightLoad = null;
+      });
+
+      return inFlightLoad;
     }
 
     function renderViewDots() {
