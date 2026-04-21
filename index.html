@@ -254,52 +254,11 @@
       );
     }
 
-    function getMaxTextureSize() {
-      const canvas = document.createElement("canvas");
-      const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
-      return gl ? (gl.getParameter(gl.MAX_TEXTURE_SIZE) || 8192) : 8192;
-    }
-
     async function preparePanorama(url) {
       const res = await fetch(url, { mode: "cors", credentials: "omit" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
-      const sourceBlobUrl = URL.createObjectURL(blob);
-
-      const img = await new Promise((resolve, reject) => {
-        const el = new Image();
-        el.onload = () => resolve(el);
-        el.onerror = () => reject(new Error("Image preload failed."));
-        el.src = sourceBlobUrl;
-      });
-
-      const max = getMaxTextureSize();
-      if (img.width <= max && img.height <= max) {
-        return { url: sourceBlobUrl };
-      }
-
-      const scale = Math.min(max / img.width, max / img.height);
-      const w = Math.max(1, Math.floor(img.width * scale));
-      const h = Math.max(1, Math.floor(img.height * scale));
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) throw new Error("Could not create resize context.");
-      ctx.drawImage(img, 0, 0, w, h);
-
-      const resizedBlob = await new Promise((resolve, reject) => {
-        canvas.toBlob((b) => {
-          if (!b) {
-            reject(new Error("Could not create resized image."));
-            return;
-          }
-          resolve(b);
-        }, "image/jpeg", 0.92);
-      });
-
-      URL.revokeObjectURL(sourceBlobUrl);
-      return { url: URL.createObjectURL(resizedBlob) };
+      return { url: URL.createObjectURL(blob) };
     }
 
     function getPreparedPanorama(url) {
